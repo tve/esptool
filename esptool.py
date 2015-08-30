@@ -17,6 +17,7 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51 Franklin
 # Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+from __future__ import print_function
 import sys
 import struct
 import serial
@@ -26,6 +27,15 @@ import argparse
 import os
 import subprocess
 import tempfile
+
+# Python 2/3 version compatibility kludges
+if sys.version_info[0] == 3:
+    xrange=range
+    def byte(b):
+        return int(b)
+else: # Python 2.x, 2.7 we hope(!)
+    def byte(b):
+        return ord(b)
 
 class ESPROM:
 
@@ -97,7 +107,7 @@ class ESPROM:
     @staticmethod
     def checksum(data, state = ESP_CHECKSUM_MAGIC):
         for b in data:
-            state ^= ord(b)
+            state ^= byte(b)
         return state
 
     """ Send a request and read the response """
@@ -127,14 +137,14 @@ class ESPROM:
     """ Perform a connection test """
     def sync(self):
         self.command(ESPROM.ESP_SYNC, '\x07\x07\x12\x20'+32*'\x55')
-        for i in xrange(7):
+        for i in range(7):
             self.command()
 
     """ Try connecting repeatedly until successful, or giving up """
     def connect(self):
-        print 'Connecting...'
+        print('Connecting...')
 
-        for _ in xrange(4):
+        for _ in range(4):
             # issue reset-to-bootloader:
             # RTS = either CH_PD or nRESET (both active low = chip in reset)
             # DTR = GPIO0 (active low = boot to flasher)
@@ -147,7 +157,7 @@ class ESPROM:
             self._port.setDTR(False)
 
             self._port.timeout = 0.3 # worst-case latency timer should be 255ms (probably <20ms)
-            for _ in xrange(4):
+            for _ in range(4):
                 try:
                     self._port.flushInput()
                     self._port.flushOutput()
@@ -311,14 +321,14 @@ class ESPFirmwareImage:
         self.flash_size_freq = 0
 
         if filename is not None:
-            f = file(filename, 'rb')
+            f = open(filename, 'rb')
             (magic, segments, self.flash_mode, self.flash_size_freq, self.entrypoint) = struct.unpack('<BBBBI', f.read(8))
             
             # some sanity check
             if magic != ESPROM.ESP_IMAGE_MAGIC or segments > 16:
                 raise Exception('Invalid firmware image')
         
-            for i in xrange(segments):
+            for i in range(segments):
                 (offset, size) = struct.unpack('<II', f.read(8))
                 if offset > 0x40200000 or offset < 0x3ffe0000 or size > 65536:
                     raise Exception('Suspicious segment 0x%x, length %d' % (offset, size))
@@ -332,7 +342,7 @@ class ESPFirmwareImage:
             align = 15-(f.tell() % 16)
             f.seek(align, 1)
 
-            self.checksum = ord(f.read(1))
+            self.checksum = byte(f.read(1)[0])
 
     def add_segment(self, addr, data):
         # Data should be aligned on word boundary
@@ -343,7 +353,7 @@ class ESPFirmwareImage:
             self.segments.append((addr, len(data), data))
 
     def save(self, filename):
-        f = file(filename, 'wb')
+        f = open(filename, 'wb')
         f.write(struct.pack('<BBBBI', ESPROM.ESP_IMAGE_MAGIC, len(self.segments),
             self.flash_mode, self.flash_size_freq, self.entrypoint))
 
@@ -374,7 +384,7 @@ class ELFFile:
                 tool_nm = "xt-nm"
             proc = subprocess.Popen([tool_nm, self.name], stdout=subprocess.PIPE)
         except OSError:
-            print "Error calling "+tool_nm+", do you have Xtensa toolchain in PATH?"
+            print("Error calling "+tool_nm+", do you have Xtensa toolchain in PATH?")
             sys.exit(1)
         for l in proc.stdout:
             fields = l.strip().split()
@@ -391,7 +401,7 @@ class ELFFile:
         try:
             proc = subprocess.Popen([tool_readelf, "-h", self.name], stdout=subprocess.PIPE)
         except OSError:
-            print "Error calling "+tool_readelf+", do you have Xtensa toolchain in PATH?"
+            print("Error calling "+tool_readelf+", do you have Xtensa toolchain in PATH?")
             sys.exit(1)
         for l in proc.stdout:
             fields = l.strip().split()
@@ -528,9 +538,9 @@ if __name__ == '__main__':
     if args.operation == 'load_ram':
         image = ESPFirmwareImage(args.filename)
 
-        print 'RAM boot...'
+        print('RAM boot...')
         for (offset, size, data) in image.segments:
-            print 'Downloading %d bytes at %08x...' % (size, offset),
+            print('Downloading %d bytes at %08x...' % (size, offset))
             sys.stdout.flush()
             esp.mem_begin(size, math.ceil(size / float(esp.ESP_RAM_BLOCK)), esp.ESP_RAM_BLOCK, offset)
 
@@ -539,27 +549,27 @@ if __name__ == '__main__':
                 esp.mem_block(data[0:esp.ESP_RAM_BLOCK], seq)
                 data = data[esp.ESP_RAM_BLOCK:]
                 seq += 1
-            print 'done!'
+            print('done!')
 
-        print 'All segments done, executing at %08x' % image.entrypoint
+        print('All segments done, executing at %08x' % image.entrypoint)
         esp.mem_finish(image.entrypoint)
 
     elif args.operation == 'read_mem':
-        print '0x%08x = 0x%08x' % (args.address, esp.read_reg(args.address))
+        print('0x%08x = 0x%08x' % (args.address, esp.read_reg(args.address)))
 
     elif args.operation == 'write_mem':
         esp.write_reg(args.address, args.value, args.mask, 0)
-        print 'Wrote %08x, mask %08x to %08x' % (args.value, args.mask, args.address)
+        print('Wrote %08x, mask %08x to %08x' % (args.value, args.mask, args.address))
 
     elif args.operation == 'dump_mem':
-        f = file(args.filename, 'wb')
+        f = open(args.filename, 'wb')
         for i in xrange(args.size/4):
             d = esp.read_reg(args.address+(i*4))
             f.write(struct.pack('<I', d))
             if f.tell() % 1024 == 0:
-                print '\r%d bytes read... (%d %%)' % (f.tell(), f.tell()*100/args.size),
+                print('\r%d bytes read... (%d %%)' % (f.tell(), f.tell()*100/args.size))
                 sys.stdout.flush()
-        print 'Done!'
+        print('Done!')
 
     elif args.operation == 'write_flash':
         assert len(args.addr_filename) % 2 == 0
@@ -573,13 +583,13 @@ if __name__ == '__main__':
             address = int(args.addr_filename[0], 0)
             filename = args.addr_filename[1]
             args.addr_filename = args.addr_filename[2:]
-            image = file(filename, 'rb').read()
-            print 'Erasing flash...'
+            image = open(filename, 'rb').read()
+            print('Erasing flash...')
             blocks = math.ceil(len(image)/float(esp.ESP_FLASH_BLOCK))
             esp.flash_begin(blocks*esp.ESP_FLASH_BLOCK, address)
             seq = 0
             while len(image) > 0:
-                print '\rWriting at 0x%08x... (%d %%)' % (address + seq*esp.ESP_FLASH_BLOCK, 100*(seq+1)/blocks),
+                print('\rWriting at 0x%08x... (%d %%)' % (address + seq*esp.ESP_FLASH_BLOCK, 100*(seq+1)/blocks))
                 sys.stdout.flush()
                 block = image[0:esp.ESP_FLASH_BLOCK]
                 # Fix sflash config data
@@ -590,8 +600,8 @@ if __name__ == '__main__':
                 esp.flash_block(block, seq)
                 image = image[esp.ESP_FLASH_BLOCK:]
                 seq += 1
-            print
-        print '\nLeaving...'
+            print()
+        print('\nLeaving...')
         if args.flash_mode == 'dio':
             esp.flash_unlock_dio()
         else:
@@ -603,15 +613,13 @@ if __name__ == '__main__':
 
     elif args.operation == 'image_info':
         image = ESPFirmwareImage(args.filename)
-        print ('Entry point: %08x' % image.entrypoint) if image.entrypoint != 0 else 'Entry point not set'
-        print '%d segments' % len(image.segments)
-        print
+        print(('Entry point: %08x' % image.entrypoint) if image.entrypoint != 0 else 'Entry point not set')
+        print('%d segments\n' % len(image.segments))
         checksum = ESPROM.ESP_CHECKSUM_MAGIC
         for (idx, (offset, size, data)) in enumerate(image.segments):
-            print 'Segment %d: %5d bytes at %08x' % (idx+1, size, offset)
+            print('Segment %d: %5d bytes at %08x' % (idx+1, size, offset))
             checksum = ESPROM.checksum(data, checksum)
-        print
-        print 'Checksum: %02x (%s)' % (image.checksum, 'valid' if image.checksum == checksum else 'invalid!')
+        print('\nChecksum: %02x (%s)' % (image.checksum, 'valid' if image.checksum == checksum else 'invalid!'))
 
     elif args.operation == 'make_image':
         image = ESPFirmwareImage()
@@ -620,7 +628,7 @@ if __name__ == '__main__':
         if len(args.segfile) != len(args.segaddr):
             raise Exception('Number of specified files does not match number of specified addresses')
         for (seg, addr) in zip(args.segfile, args.segaddr):
-            data = file(seg, 'rb').read()
+            data = open(seg, 'rb').read()
             image.add_segment(addr, data)
         image.entrypoint = args.entrypoint
         image.save(args.output)
@@ -649,16 +657,16 @@ if __name__ == '__main__':
 
     elif args.operation == 'read_mac':
         mac = esp.read_mac()
-        print 'MAC: %s' % ':'.join(map(lambda x: '%02x'%x, mac))
+        print('MAC: %s' % ':'.join(map(lambda x: '%02x'%x, mac)))
 
     elif args.operation == 'flash_id':
         flash_id = esp.flash_id()
-        print 'Manufacturer: %02x' % (flash_id & 0xff)
-        print 'Device: %02x%02x' % ((flash_id >> 8) & 0xff, (flash_id >> 16) & 0xff)
+        print('Manufacturer: %02x' % (flash_id & 0xff))
+        print('Device: %02x%02x' % ((flash_id >> 8) & 0xff, (flash_id >> 16) & 0xff))
 
     elif args.operation == 'read_flash':
-        print 'Please wait...'
-        file(args.filename, 'wb').write(esp.flash_read(args.address, 1024, int(math.ceil(args.size / 1024.)))[:args.size])
+        print('Please wait...')
+        open(args.filename, 'wb').write(esp.flash_read(args.address, 1024, int(math.ceil(args.size / 1024.)))[:args.size])
 
     elif args.operation == 'erase_flash':
         esp.flash_erase()
