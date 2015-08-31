@@ -37,6 +37,15 @@ else: # Python 2.x, 2.7 we hope(!)
     def byte(b):
         return ord(b)
 
+class EspError(Exception):
+    pass
+
+class CommunicationError(EspError):
+    pass
+
+class ImageFileError(EspError):
+    pass
+
 class ESPROM:
 
     # These are the currently known commands supported by the ROM
@@ -93,7 +102,7 @@ class ESPROM:
                 elif c == '\xdd':
                     b = b + '\xdb'
                 else:
-                    raise Exception('Invalid SLIP escape')
+                    raise CommunicationError('Invalid SLIP escape')
             else:
                 b = b + c
         return b
@@ -118,19 +127,21 @@ class ESPROM:
             self.write(pkt)
 
         # Read header of response and parse
-        if self._port.read(1) != '\xc0':
-            raise Exception('Invalid head of packet')
+        head = self._port.read(1)
+        if head != b'\xc0':
+            raise CommunicationError('Invalid head of packet: %r' % head)
         hdr = self.read(8)
         (resp, op_ret, len_ret, val) = struct.unpack('<BBHI', hdr)
         if resp != 0x01 or (op and op_ret != op):
-            raise Exception('Invalid response')
+            raise CommunicationError('Invalid response')
 
         # The variable-length body
         body = self.read(len_ret)
 
         # Terminating byte
-        if self._port.read(1) != chr(0xc0):
-            raise Exception('Invalid end of packet')
+        tail  = self._port.read(1)
+        if tail != b'\xc0':
+            raise CommunicationError('Invalid end of packet: %r' % tail)
 
         return val, body
 
@@ -164,40 +175,40 @@ class ESPROM:
                     self.sync()
                     self._port.timeout = 5
                     return
-                except:
+                except CommunicationError:
                     time.sleep(0.05)
-        raise Exception('Failed to connect')
+        raise CommunicationError('Failed to connect')
 
     """ Read memory address in target """
     def read_reg(self, addr):
         res = self.command(ESPROM.ESP_READ_REG, struct.pack('<I', addr))
         if res[1] != "\0\0":
-            raise Exception('Failed to read target memory')
+            raise CommunicationError('Failed to read target memory')
         return res[0]
 
     """ Write to memory address in target """
     def write_reg(self, addr, value, mask, delay_us = 0):
         if self.command(ESPROM.ESP_WRITE_REG,
                 struct.pack('<IIII', addr, value, mask, delay_us))[1] != "\0\0":
-            raise Exception('Failed to write target memory')
+            raise CommunicationError('Failed to write target memory')
 
     """ Start downloading an application image to RAM """
     def mem_begin(self, size, blocks, blocksize, offset):
         if self.command(ESPROM.ESP_MEM_BEGIN,
                 struct.pack('<IIII', size, blocks, blocksize, offset))[1] != "\0\0":
-            raise Exception('Failed to enter RAM download mode')
+            raise CommunicationError('Failed to enter RAM download mode')
 
     """ Send a block of an image to RAM """
     def mem_block(self, data, seq):
         if self.command(ESPROM.ESP_MEM_DATA,
                 struct.pack('<IIII', len(data), seq, 0, 0)+data, ESPROM.checksum(data))[1] != "\0\0":
-            raise Exception('Failed to write to target RAM')
+            raise CommunicationError('Failed to write to target RAM')
 
     """ Leave download mode and run the application """
     def mem_finish(self, entrypoint = 0):
         if self.command(ESPROM.ESP_MEM_END,
                 struct.pack('<II', int(entrypoint == 0), entrypoint))[1] != "\0\0":
-            raise Exception('Failed to leave RAM download mode')
+            raise CommunicationError('Failed to leave RAM download mode')
 
     """ Start downloading to Flash (performs an erase) """
     def flash_begin(self, size, offset):
@@ -221,20 +232,20 @@ class ESPROM:
         self._port.timeout = 10
         if self.command(ESPROM.ESP_FLASH_BEGIN,
                 struct.pack('<IIII', erase_size, num_blocks, ESPROM.ESP_FLASH_BLOCK, offset))[1] != "\0\0":
-            raise Exception('Failed to enter Flash download mode')
+            raise CommunicationError('Failed to enter Flash download mode')
         self._port.timeout = old_tmo
 
     """ Write block to flash """
     def flash_block(self, data, seq):
         if self.command(ESPROM.ESP_FLASH_DATA,
                 struct.pack('<IIII', len(data), seq, 0, 0)+data, ESPROM.checksum(data))[1] != "\0\0":
-            raise Exception('Failed to write to target Flash')
+            raise CommunicationError('Failed to write to target Flash')
 
     """ Leave flash mode and run/reboot """
     def flash_finish(self, reboot = False):
         pkt = struct.pack('<I', int(not reboot))
         if self.command(ESPROM.ESP_FLASH_END, pkt)[1] != "\0\0":
-            raise Exception('Failed to leave Flash mode')
+            raise CommunicationError('Failed to leave Flash mode')
 
     """ Run application code in flash """
     def run(self, reboot = False):
@@ -251,7 +262,7 @@ class ESPROM:
         elif ((mac1 >> 16) & 0xff) == 1:
             oui = (0xac, 0xd0, 0x74)
         else:
-            raise Exception("Unknown OUI")
+            raise CommunicationError("Unknown OUI")
         return oui + ((mac1 >> 8) & 0xff, mac1 & 0xff, (mac0 >> 24) & 0xff)
 
     """ Read SPI flash manufacturer and device id """
@@ -280,12 +291,12 @@ class ESPROM:
         data = ''
         for _ in xrange(count):
             if self._port.read(1) != '\xc0':
-                raise Exception('Invalid head of packet (sflash read)')
+                raise CommunicationError('Invalid head of packet (sflash read)')
 
             data += self.read(size)
 
-            if self._port.read(1) != chr(0xc0):
-                raise Exception('Invalid end of packet (sflash read)')
+            if self._port.read(1) != '\xc0':
+                raise CommunicationError('Invalid end of packet (sflash read)')
 
         return data
 
@@ -326,15 +337,15 @@ class ESPFirmwareImage:
             
             # some sanity check
             if magic != ESPROM.ESP_IMAGE_MAGIC or segments > 16:
-                raise Exception('Invalid firmware image')
+                raise ImageFileError('Invalid firmware image')
         
             for i in range(segments):
                 (offset, size) = struct.unpack('<II', f.read(8))
                 if offset > 0x40200000 or offset < 0x3ffe0000 or size > 65536:
-                    raise Exception('Suspicious segment 0x%x, length %d' % (offset, size))
+                    raise ImageFileError('Suspicious segment 0x%x, length %d' % (offset, size))
                 segment_data = f.read(size)
                 if len(segment_data) < size:
-                    raise Exception('End of file reading segment 0x%x, length %d (actual length %d)' % (offset, size, len(segment_data)))
+                    raise ImageFileError('End of file reading segment 0x%x, length %d (actual length %d)' % (offset, size, len(segment_data)))
                 self.segments.append((offset, size, segment_data))
 
             # Skip the padding. The checksum is stored in the last byte so that the
@@ -624,9 +635,9 @@ if __name__ == '__main__':
     elif args.operation == 'make_image':
         image = ESPFirmwareImage()
         if len(args.segfile) == 0:
-            raise Exception('No segments specified')
+            raise ImageFileError('No segments specified')
         if len(args.segfile) != len(args.segaddr):
-            raise Exception('Number of specified files does not match number of specified addresses')
+            raise ImageFileError('Number of specified files does not match number of specified addresses')
         for (seg, addr) in zip(args.segfile, args.segaddr):
             data = open(seg, 'rb').read()
             image.add_segment(addr, data)
