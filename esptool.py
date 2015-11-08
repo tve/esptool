@@ -64,7 +64,11 @@ class ESPROM:
             "\x04\x00\x0b\xcc\x56\xec\xfd\x06\xff\xff\x00\x00"
 
     def __init__(self, port = 0, baud = ESP_ROM_BAUD):
-        self._port = serial.Serial(port)
+	#support for rfc2217 serial port(TCP serial server)URLs rfc2217://benchpc.example.com:2217
+        try:
+            self._port = serial.serial_for_url(port)
+        except AttributeError:
+            self._port = serial.Serial(port)
         # setting baud rate in a separate step is a workaround for
         # CH341 driver on some Linux versions (this opens at 9600 then
         # sets), shouldn't matter for other platforms/drivers. See
@@ -486,6 +490,7 @@ if __name__ == '__main__':
     parser_run = subparsers.add_parser(
             'run',
             help = 'Run application code in flash')
+    parser_run.add_argument('--terminal', '-t', help = 'Start serial terminal', action = 'store_true', default = False)
 
     parser_image_info = subparsers.add_parser(
             'image_info',
@@ -619,6 +624,10 @@ if __name__ == '__main__':
 
     elif args.operation == 'run':
         esp.run()
+        if args.terminal:
+            from terminal import terminal
+            print 'Press ^C twice to exit'
+            terminal(esp._port)
 
     elif args.operation == 'image_info':
         image = ESPFirmwareImage(args.filename)

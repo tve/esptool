@@ -27,7 +27,7 @@ Or hack the script to your hearts content.
 ### Ports
 
 The serial port is selected using the `-p` option, like `-p /dev/ttyUSB0` (on unixen like Linux and OSX) or `-p COM1`
-(on Windows). The perhaps not so obvious corner case here is when you run esptool in Cygwin on Windows, where you have to convert the Windows-style name into an Unix-style path (`COM1` -> `/dev/ttyS0`, and so on).
+(on Windows). The perhaps not so obvious corner case here is when you run esptool in Cygwin on Windows, where you have to convert the Windows-style name into an Unix-style path (`COM1` -> `/dev/ttyS0`, and so on).  TCP Serial(RFC21217) URL can be specified as documented in pySerial '-p rfc2217://benchpc.example.com:2217' 
 
 The baudrate may be set using `-b 921600` (or another baudrate of your choice) to speed up large transfers.
 
