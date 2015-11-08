@@ -8,8 +8,8 @@
 # This program is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free Software
 # Foundation; either version 2 of the License, or (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful, but WITHOUT 
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
 # ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 #
@@ -138,13 +138,13 @@ class ESPROM:
             # issue reset-to-bootloader:
             # RTS = either CH_PD or nRESET (both active low = chip in reset)
             # DTR = GPIO0 (active low = boot to flasher)
-            self._port.setDTR(False)
+            self._port.setDTR(True)
             self._port.setRTS(True)
             time.sleep(0.05)
-            self._port.setDTR(True)
             self._port.setRTS(False)
             time.sleep(0.05)
-            self._port.setDTR(False)
+            #self._port.setDTR(False)
+            #time.sleep(0.05)
 
             self._port.timeout = 0.3 # worst-case latency timer should be 255ms (probably <20ms)
             for _ in xrange(4):
@@ -156,7 +156,15 @@ class ESPROM:
                     return
                 except:
                     time.sleep(0.05)
+            self._port.setRTS(False)
+            self._port.setDTR(False)
         raise Exception('Failed to connect')
+
+    """ Disconnect from port and tr to leave RTS and DTR high """
+    def disconnect(self):
+        self._port.setDTR(False)
+        self._port.setRTS(False)
+        self._port.close()
 
     """ Read memory address in target """
     def read_reg(self, addr):
@@ -303,7 +311,7 @@ class ESPROM:
         # It it on the other hand unlikely to fail.
 
 class ESPFirmwareImage:
-    
+
     def __init__(self, filename = None):
         self.segments = []
         self.entrypoint = 0
@@ -313,11 +321,11 @@ class ESPFirmwareImage:
         if filename is not None:
             f = file(filename, 'rb')
             (magic, segments, self.flash_mode, self.flash_size_freq, self.entrypoint) = struct.unpack('<BBBBI', f.read(8))
-            
+
             # some sanity check
             if magic != ESPROM.ESP_IMAGE_MAGIC or segments > 16:
                 raise Exception('Invalid firmware image')
-        
+
             for i in xrange(segments):
                 (offset, size) = struct.unpack('<II', f.read(8))
                 if offset > 0x40200000 or offset < 0x3ffe0000 or size > 65536:
@@ -488,8 +496,8 @@ if __name__ == '__main__':
             'make_image',
             help = 'Create an application image from binary files')
     parser_make_image.add_argument('output', help = 'Output image file')
-    parser_make_image.add_argument('--segfile', '-f', action = 'append', help = 'Segment input file') 
-    parser_make_image.add_argument('--segaddr', '-a', action = 'append', help = 'Segment base address', type = arg_auto_int) 
+    parser_make_image.add_argument('--segfile', '-f', action = 'append', help = 'Segment input file')
+    parser_make_image.add_argument('--segaddr', '-a', action = 'append', help = 'Segment base address', type = arg_auto_int)
     parser_make_image.add_argument('--entrypoint', '-e', help = 'Address of entry point', type = arg_auto_int, default = 0)
 
     parser_elf2image = subparsers.add_parser(
